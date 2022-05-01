@@ -35,10 +35,74 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <string.h>
+#include <unistd.h>
+#include <sys/select.h>
+#include <termios.h>
+
 #define PIN_BASE 300
 #define MAX_PWM 4096
 #define HERTZ 50
 
+#define L_EN 28
+#define R_EN 29
+#define MOTOR_1_L 0
+#define MOTOR_1_R 1
+
+struct termios orig_termios;
+
+void reset_terminal_mode()
+{
+	tcsetattr(0, TCSANOW, &orig_termios);
+}
+
+void set_conio_terminal_mode()
+{
+	struct termios new_termios;
+
+	/* take two copies - one for now, one for later */
+	tcgetattr(0, &orig_termios);
+	memcpy(&new_termios, &orig_termios, sizeof(new_termios));
+
+	/* register cleanup handler, and set the new terminal mode */
+	atexit(reset_terminal_mode);
+	cfmakeraw(&new_termios);
+	tcsetattr(0, TCSANOW, &new_termios);
+}
+
+int kbhit()
+{
+	struct timeval tv = {0L, 0L};
+	fd_set fds;
+	FD_ZERO(&fds);
+	FD_SET(0, &fds);
+	return select(1, &fds, NULL, NULL, &tv) > 0;
+}
+
+int dataRdy(int fd)
+{
+	struct timeval tv = {0L, 0L};
+	fd_set fds;
+	FD_ZERO(&fds);
+	FD_SET(fd, &fds);
+	return select(fd + 1, &fds, NULL, NULL, &tv);
+}
+
+#define NO_KEY_PRESSED -1
+
+int getch(int fd)
+{
+	int r;
+	unsigned char c;
+	if ((r = read(fd, &c, sizeof(c))) < 0)
+	{
+		return NO_KEY_PRESSED;
+	}
+	else
+	{
+		return c;
+	}
+}
 
 /**
  * Calculate the number of ticks the signal should be high for the required amount of time
@@ -59,13 +123,25 @@ float map(float input, float min, float max)
 }
 
 
+
 int main(void)
 {
-	printf("PCA9685 servo example\n");
-	printf("Connect a servo to any pin. It will rotate to random angles\n");
+	int c;
 
-	// Calling wiringPi setup first.
-	wiringPiSetup();
+	printf("PCA9685 servo example\r\n");
+	printf("Press ctrl-C to finish\r\n");
+
+	set_conio_terminal_mode();
+
+	
+	// printf("Connect a servo to any pin. It will rotate to random angles\n");
+
+	
+	wiringPiSetup(); // Initializes wiringPi using wiringPi's simlified number system.
+	// wiringPiSetupGpio(); // Initializes wiringPi using the Broadcom GPIO pin numbers
+
+	pinMode(L_EN, OUTPUT);
+	pinMode(R_EN, OUTPUT);
 
 	// Setup with pinbase 300 and i2c location 0x40
 	int fd = pca9685Setup(PIN_BASE, 0x40, HERTZ);
@@ -78,28 +154,77 @@ int main(void)
 	// Reset all output
 	pca9685PWMReset(fd);
 
-
 	// Set servo to neutral position at 1.5 milliseconds
 	// (View http://en.wikipedia.org/wiki/Servo_control#Pulse_duration)
-	float millis = 1.5;
-	int tick = calcTicks(millis, HERTZ);
-	pwmWrite(PIN_BASE + 16, tick);
-	delay(2000);
+	// float millis = 1.5;
+	// int tick = calcTicks(millis, HERTZ);
+	// pwmWrite(PIN_BASE + 16, tick);
+	// delay(2000);
 
-
-	int active = 1;
-	while (active)
+	int done = 0;
+	while (!done)
 	{
+		c = getch(0);
+
+		switch (c)
+		{
+		case 3: // ctrl-C
+			digitalWrite(L_EN, LOW);
+			digitalWrite(R_EN, LOW);
+			pwmWrite(PIN_BASE + MOTOR_1_R, 0);
+			pwmWrite(PIN_BASE + MOTOR_1_L, 0);
+			done = 1;
+			break;
+
+		case 'd':
+		case 'D':
+			// printf("d pressed\r\n");
+			printf("Disabling bts7960\r\n");
+			digitalWrite(L_EN, LOW);
+			digitalWrite(R_EN, LOW);
+			break;
+
+		case 'e':
+			// printf("e pressed\r\n");
+			printf("Enabling bts7960\r\n");
+			digitalWrite(L_EN, HIGH);
+			digitalWrite(R_EN, HIGH);
+			break;
+
+		case 'q':
+		case 'Q':
+			printf("Left Direction \r\n");
+			pwmWrite(PIN_BASE + MOTOR_1_R, 0);
+			pwmWrite(PIN_BASE + MOTOR_1_L, 2000);
+			break;
+
+		case 'a':
+		case 'A':
+			printf("Right Direction\r\n");
+			pwmWrite(PIN_BASE + MOTOR_1_L, 0);
+			pwmWrite(PIN_BASE + MOTOR_1_R, 2000);
+			break;
+
+		case 's':
+		case 'S':
+			printf("Stopping\r\n");
+			pwmWrite(PIN_BASE + MOTOR_1_L, 0);
+			pwmWrite(PIN_BASE + MOTOR_1_R, 0);
+			break;
+		}
+
 		// That's a hack. We need a random number < 1
-		float r = rand();
-		while (r > 1)
-			r /= 10;
+		// float r = rand();
+		// while (r > 1)
+		// 	r /= 10;
 
-		millis = map(r, 1, 2);
-		tick = calcTicks(millis, HERTZ);
+		// millis = map(r, 1, 2);
+		// tick = calcTicks(millis, HERTZ);
 
-		pwmWrite(PIN_BASE + 16, tick);
-		delay(1000);
+		// pwmWrite(PIN_BASE + 16, tick);
+
+		// delay(1000);
+		usleep(1000); // sleep for a millisecond
 	}
 
 	return 0;
